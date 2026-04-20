@@ -1,163 +1,131 @@
-import cv2
 import json
+import cv2
 import numpy as np
-from collections import defaultdict, deque
 
 
-class TeamColorClassifier:
-    def __init__(self, history_size=10, other_absolute_threshold=40.0, ambiguity_margin=8.0):
-        self.team_prototypes = {}
-        self.track_history = defaultdict(lambda: deque(maxlen=history_size))
-        self.stable_team_by_track = {}
-        self.history_size = history_size
-        self.other_absolute_threshold = other_absolute_threshold
-        self.ambiguity_margin = ambiguity_margin
+class TeamClassifier:
+    def __init__(self):
+        self.samples = {0: [], 1: []}
+        self.unknown_margin = 0.10
 
-    def extract_jersey_color(self, frame, box):
-        x1, y1, x2, y2 = map(int, box)
+    def _clip_bbox(self, frame, bbox):
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = map(int, bbox)
 
-        w = x2 - x1
-        h = y2 - y1
+        x1 = max(0, min(x1, w - 1))
+        y1 = max(0, min(y1, h - 1))
+        x2 = max(x1 + 1, min(x2, w))
+        y2 = max(y1 + 1, min(y2, h))
 
-        if w <= 0 or h <= 0:
+        return x1, y1, x2, y2
+
+    def extract_jersey_feature(self, frame, bbox):
+        x1, y1, x2, y2 = self._clip_bbox(frame, bbox)
+        crop = frame[y1:y2, x1:x2]
+
+        if crop.size == 0:
             return None
 
-        roi_x1 = x1 + int(w * 0.25)
-        roi_x2 = x1 + int(w * 0.75)
-        roi_y1 = y1 + int(h * 0.18)
-        roi_y2 = y1 + int(h * 0.48)
+        h, w = crop.shape[:2]
 
-        roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
+        y_start = int(0.10 * h)
+        y_end = max(int(0.55 * h), y_start + 1)
+        x_start = int(0.15 * w)
+        x_end = max(int(0.85 * w), x_start + 1)
 
-        if roi.size == 0:
-            return None
+        jersey = crop[y_start:y_end, x_start:x_end]
+        if jersey.size == 0:
+            jersey = crop
 
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+        hsv = cv2.cvtColor(jersey, cv2.COLOR_BGR2HSV)
+        s = hsv[:, :, 1]
+        v = hsv[:, :, 2]
 
-        green_mask = cv2.inRange(hsv, (35, 25, 25), (95, 255, 255))
-        non_green_mask = cv2.bitwise_not(green_mask)
+        green_mask = cv2.inRange(hsv, (35, 30, 20), (95, 255, 255))
+        non_green = cv2.bitwise_not(green_mask)
 
-        pixels = lab[non_green_mask > 0]
+        informative = np.where((s > 25) | (v > 160), 255, 0).astype(np.uint8)
+        mask = cv2.bitwise_and(non_green, informative)
 
-        if len(pixels) < 20:
-            pixels = lab.reshape(-1, 3)
+        if cv2.countNonZero(mask) < 0.02 * mask.size:
+            mask = non_green
 
-        mean_color = np.mean(pixels, axis=0)
-        return mean_color
+        if cv2.countNonZero(mask) < 0.02 * mask.size:
+            mask = np.full(mask.shape, 255, dtype=np.uint8)
 
-    def set_team_prototypes(self, team0_color, team1_color):
-        self.team_prototypes = {
-            0: np.array(team0_color, dtype=np.float32),
-            1: np.array(team1_color, dtype=np.float32)
-        }
+        hist_h = cv2.calcHist([hsv], [0], mask, [18], [0, 180]).flatten()
+        hist_s = cv2.calcHist([hsv], [1], mask, [8], [0, 256]).flatten()
 
-    def save_prototypes(self, output_path):
+        if hist_h.sum() > 0:
+            hist_h = hist_h / hist_h.sum()
+
+        if hist_s.sum() > 0:
+            hist_s = hist_s / hist_s.sum()
+
+        mean_bgr = np.array(cv2.mean(jersey, mask=mask)[:3], dtype=np.float32) / 255.0
+
+        pixels = jersey[mask > 0]
+        if len(pixels) > 0:
+            std_bgr = pixels.std(axis=0).astype(np.float32) / 255.0
+        else:
+            std_bgr = np.zeros(3, dtype=np.float32)
+
+        feature = np.concatenate([hist_h, hist_s, mean_bgr, std_bgr]).astype(np.float32)
+        return feature
+
+    def add_sample(self, team_id, feature):
+        if feature is not None:
+            self.samples[int(team_id)].append(feature)
+
+    def save_samples(self, path):
         data = {
-            "team_0": self.team_prototypes[0].tolist(),
-            "team_1": self.team_prototypes[1].tolist()
+            "team_0": [s.tolist() for s in self.samples[0]],
+            "team_1": [s.tolist() for s in self.samples[1]],
         }
-
-        with open(output_path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-    def load_prototypes(self, input_path):
-        with open(input_path, "r", encoding="utf-8") as f:
+    def load_samples(self, path):
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        self.team_prototypes = {
-            0: np.array(data["team_0"], dtype=np.float32),
-            1: np.array(data["team_1"], dtype=np.float32)
-        }
+        self.samples[0] = [np.array(s, dtype=np.float32) for s in data.get("team_0", [])]
+        self.samples[1] = [np.array(s, dtype=np.float32) for s in data.get("team_1", [])]
 
-    def _raw_predict(self, color):
-        if color is None or len(self.team_prototypes) != 2:
-            return None
+    def _team_distance(self, feature, team_id):
+        team_samples = self.samples[team_id]
+        if not team_samples:
+            return 1e9
 
-        color = np.array(color, dtype=np.float32)
+        dists = [float(np.linalg.norm(feature - s)) for s in team_samples]
+        dists.sort()
 
-        dist_0 = float(np.linalg.norm(color - self.team_prototypes[0]))
-        dist_1 = float(np.linalg.norm(color - self.team_prototypes[1]))
+        k = min(2, len(dists))
+        return 0.7 * dists[0] + 0.3 * np.mean(dists[:k])
 
-        best_team = 0 if dist_0 <= dist_1 else 1
-        best_dist = min(dist_0, dist_1)
-        second_dist = max(dist_0, dist_1)
+    def classify_feature(self, feature):
+        if feature is None:
+            return -1, 0.0
 
-        if best_dist > self.other_absolute_threshold:
-            return 2
+        d0 = self._team_distance(feature, 0)
+        d1 = self._team_distance(feature, 1)
 
-        if (second_dist - best_dist) < self.ambiguity_margin:
-            return 2
+        if not np.isfinite(d0) or not np.isfinite(d1):
+            return -1, 0.0
 
-        return best_team
+        if d0 <= d1:
+            best_team, best_dist, other_dist = 0, d0, d1
+        else:
+            best_team, best_dist, other_dist = 1, d1, d0
 
-    def _smooth_prediction(self, track_id):
-        history = list(self.track_history[track_id])
+        margin = (other_dist - best_dist) / max(other_dist, 1e-6)
+        confidence = float(np.clip(margin, 0.0, 1.0))
 
-        if not history:
-            return None
+        if margin < self.unknown_margin:
+            return -1, confidence
 
-        count_0 = history.count(0)
-        count_1 = history.count(1)
-        count_2 = history.count(2)
+        return best_team, confidence
 
-        previous_stable = self.stable_team_by_track.get(track_id)
-
-        if previous_stable in [0, 1]:
-            if history[-1] == previous_stable:
-                return previous_stable
-
-            if history.count(previous_stable) >= max(3, len(history) // 3):
-                return previous_stable
-
-            if len(history) >= 5 and history[-5:].count(2) >= 4:
-                return 2
-
-            other_team = 1 if previous_stable == 0 else 0
-            other_votes = count_1 if other_team == 1 else count_0
-            prev_votes = count_0 if previous_stable == 0 else count_1
-
-            if other_votes >= prev_votes + 3 and other_votes >= 5:
-                self.stable_team_by_track[track_id] = other_team
-                return other_team
-
-            return previous_stable
-
-        best_team = 0 if count_0 >= count_1 else 1
-        best_votes = max(count_0, count_1)
-
-        if best_votes >= 4:
-            self.stable_team_by_track[track_id] = best_team
-            return best_team
-
-        if count_2 >= 5:
-            return 2
-
-        return best_team
-
-    def predict_team(self, track_id, color):
-        raw_label = self._raw_predict(color)
-
-        if raw_label is None:
-            return None
-
-        self.track_history[track_id].append(raw_label)
-        return self._smooth_prediction(track_id)
-
-    def get_team_color(self, team_id):
-        if team_id == 0:
-            return (255, 0, 0)
-        if team_id == 1:
-            return (0, 0, 255)
-        if team_id == 2:
-            return (0, 255, 255)
-        return (0, 255, 0)
-
-    def get_team_label(self, team_id):
-        if team_id == 0:
-            return "TEAM 0"
-        if team_id == 1:
-            return "TEAM 1"
-        if team_id == 2:
-            return "OTHERS"
-        return "UNK"
+    def classify_player(self, frame, bbox):
+        feature = self.extract_jersey_feature(frame, bbox)
+        return self.classify_feature(feature)
