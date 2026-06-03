@@ -133,36 +133,36 @@ def build_panel(stats, sec, team_counts, frame_idx, max_frames) -> np.ndarray:
     M    = 14
 
     # ── Header
-    d.rectangle([0, 0, W, 54], fill=_BG)
-    d.rectangle([0, 0, 4, 54], fill=_ACCENT)
+    d.rectangle([0, 0, W, 64], fill=_BG)
+    d.rectangle([0, 0, 4, 64], fill=_ACCENT)
     mins  = int(sec) // 60
     secs_ = int(sec) % 60
-    _t(d, "MATCH ANALYSIS", (M+6, 8),  10, _TEXT_MUTED, bold=True)
-    _t(d, f"{mins:02d}:{secs_:02d}",    (W-M,  8),  32, _WHITE, bold=True, anchor="rt")
+    _t(d, "MATCH ANALYSIS", (M+8, 10), 9, _TEXT_MUTED, bold=True)
+    _t(d, f"{mins:02d}:{secs_:02d}", (W-M, 8), 36, _WHITE, bold=True, anchor="rt")
     pct_done = int(frame_idx / max(max_frames,1) * 100)
-    _t(d, f"{pct_done}%", (M+6, 38), 9, _TEXT_FAINT)
+    _t(d, f"{pct_done}%", (M+8, 44), 9, _TEXT_FAINT)
     prog_w = int(W * frame_idx / max(max_frames,1))
-    d.rectangle([0, 50, W,      54], fill=_DIVIDER)
-    d.rectangle([0, 50, prog_w, 54], fill=_ACCENT)
-    y = 62
+    d.rectangle([0, 60, W,        64], fill=_DIVIDER)
+    d.rectangle([0, 60, prog_w,   64], fill=_ACCENT)
+    y = 72
 
     # ── Possesso
     y = _section(d, "BALL POSSESSION", y, M, W)
     p0, p1   = stats.possession_pct()
     rp0, rp1 = stats.recent_possession()
     cx = W // 2
-    _t(d, f"{p0:.0f}%", (cx-10, y), 38, _T0, bold=True, anchor="rt")
-    _t(d, "–",           (cx,    y+12), 12, _TEXT_FAINT, anchor="mt")
-    _t(d, f"{p1:.0f}%", (cx+10, y), 38, _T1, bold=True)
-    y += 44
-    _t(d, "TEAM 0", (M,   y), 8, _T0, bold=True)
-    _t(d, "TEAM 1", (W-M, y), 8, _T1, bold=True, anchor="rt")
-    y += 10
-    _hbar_split(d, M, y, W-M*2, 6, p0, _T0, _T1, radius=3)
+    _t(d, f"{p0:.0f}%", (cx-14, y), 44, _T0, bold=True, anchor="rt")
+    _t(d, "–",           (cx,    y+16), 14, _TEXT_FAINT, anchor="mt")
+    _t(d, f"{p1:.0f}%", (cx+14, y), 44, _T1, bold=True)
+    y += 52
+    _t(d, "TEAM 0", (M,   y), 9, _T0, bold=True)
+    _t(d, "TEAM 1", (W-M, y), 9, _T1, bold=True, anchor="rt")
     y += 12
-    _t(d, f"Last 5s  {rp0:.0f}% – {rp1:.0f}%", (cx, y), 8, _TEXT_MUTED, anchor="mt")
+    _hbar_split(d, M, y, W-M*2, 8, p0, _T0, _T1, radius=4)
     y += 14
-    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 8
+    _t(d, f"Last 5s  {rp0:.0f}% – {rp1:.0f}%", (cx, y), 9, _TEXT_MUTED, anchor="mt")
+    y += 16
+    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 10
 
     # ── Giocatori
     y = _section(d, "PLAYERS ON FIELD", y, M, W)
@@ -170,121 +170,111 @@ def build_panel(stats, sec, team_counts, frame_idx, max_frames) -> np.ndarray:
     x2s = M + hw + 8
     for xi, tid, col in [(M, 0, _T0), (x2s, 1, _T1)]:
         cnt = team_counts.get(tid, 0)
-        _card(d, xi, y, xi+hw, y+48, fill=_CARD_BG, radius=6)
-        d.rectangle([xi, y, xi+hw, y+3], fill=col)
-        _t(d, str(cnt),         (xi+hw//2, y+6),  26, col,        bold=True, anchor="mt")
-        _t(d, f"TEAM {tid}",    (xi+hw//2, y+36),  8, _TEXT_MUTED, anchor="mt")
-    y += 56
-    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 8
+        _card(d, xi, y, xi+hw, y+58, fill=_CARD_BG, radius=8)
+        d.rectangle([xi, y, xi+hw, y+4], fill=col)
+        _t(d, str(cnt),         (xi+hw//2, y+8),  32, col,        bold=True, anchor="mt")
+        _t(d, f"TEAM {tid}",    (xi+hw//2, y+46),  9, _TEXT_MUTED, anchor="mt")
+    y += 68
+    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 10
 
     # ── Passaggi
     y = _section(d, "PASSES", y, M, W)
     ps0  = stats.passes.get(0, 0)
     ps1  = stats.passes.get(1, 0)
     totP = max(ps0+ps1, 1)
-    _card(d, M, y, W-M, y+36, fill=_CARD_BG, radius=6)
-    _t(d, str(ps0), (M+16,   y+8), 20, _T0, bold=True)
-    _t(d, "T0",     (M+16,   y+29), 8, _TEXT_MUTED)
-    _t(d, str(ps1), (W-M-16, y+8), 20, _T1, bold=True, anchor="rt")
-    _t(d, "T1",     (W-M-16, y+29), 8, _TEXT_MUTED, anchor="rt")
-    bw = W-M*2-80; bx = M+40
-    _hbar_split(d, bx, y+18, bw, 4, ps0/totP*100, _T0, _T1, radius=2)
-    y += 44
-    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 8
+    _card(d, M, y, W-M, y+44, fill=_CARD_BG, radius=8)
+    _t(d, str(ps0), (M+18,   y+6),  26, _T0, bold=True)
+    _t(d, "T0",     (M+18,   y+34),  9, _TEXT_MUTED)
+    _t(d, str(ps1), (W-M-18, y+6),  26, _T1, bold=True, anchor="rt")
+    _t(d, "T1",     (W-M-18, y+34),  9, _TEXT_MUTED, anchor="rt")
+    bw = W-M*2-90; bx = M+45
+    _hbar_split(d, bx, y+20, bw, 6, ps0/totP*100, _T0, _T1, radius=3)
+    y += 52
+    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 10
 
     # ── Velocità
     y = _section(d, "SPEED  avg / max", y, M, W)
     s0, s1   = stats.avg_speed_kmh()
     mx0, mx1 = stats.max_speed_kmh()
     for xi, spd, mspd, col in [(M, s0, mx0, _T0), (x2s, s1, mx1, _T1)]:
-        _card(d, xi, y, xi+hw, y+50, fill=_CARD_BG, radius=6)
-        d.rectangle([xi, y, xi+hw, y+3], fill=col)
-        _t(d, f"{spd:.1f}",   (xi+10, y+5),  20, col,        bold=True)
-        _t(d, "km/h",          (xi+10, y+27),  8, _TEXT_MUTED)
-        _t(d, f"max {mspd:.1f}", (xi+10, y+38), 8, _TEXT_FAINT)
-    y += 58
-    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 8
+        _card(d, xi, y, xi+hw, y+62, fill=_CARD_BG, radius=8)
+        d.rectangle([xi, y, xi+hw, y+4], fill=col)
+        _t(d, f"{spd:.1f}",      (xi+12, y+6),   26, col,         bold=True)
+        _t(d, "km/h",             (xi+12, y+34),   9, _TEXT_MUTED)
+        _t(d, f"max {mspd:.1f}", (xi+12, y+48),   9, _TEXT_FAINT)
+    y += 72
+    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 10
 
     # ── Distanza
     y = _section(d, "DISTANCE COVERED", y, M, W)
     d0, d1  = stats.distance_meters()
     max_d   = max(d0, d1, 1.0)
-    bw_full = W-M*2-60
+    bw_full = W-M*2-66
     for dist, col, label in [(d0, _T0, "T0"), (d1, _T1, "T1")]:
-        _t(d, label, (M, y+2), 8, col, bold=True)
-        _hbar_single(d, M+22, y, bw_full, 7, dist/max_d*100, col, radius=3)
-        _t(d, f"{dist/1000:.2f} km", (W-M, y+2), 8, col, bold=True, anchor="rt")
-        y += 16
+        _t(d, label, (M, y+2), 9, col, bold=True)
+        _hbar_single(d, M+26, y+1, bw_full, 9, dist/max_d*100, col, radius=4)
+        _t(d, f"{dist/1000:.2f} km", (W-M, y+2), 9, col, bold=True, anchor="rt")
+        y += 20
     y += 4
-    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 6
+    d.rectangle([M, y, W-M, y+1], fill=_DIVIDER); y += 8
 
     # ── Footer
     refn = team_counts.get(2, 0)
     unkn = team_counts.get(-1, 0)
-    _t(d, f"REF {refn}   UNK {unkn}", (M, y+2), 8, _TEXT_FAINT)
-    _t(d, f"{frame_idx} / {max_frames}", (W-M, y+2), 8, _TEXT_FAINT, anchor="rt")
+    _t(d, f"REF {refn}   UNK {unkn}", (M, y+3), 9, _TEXT_FAINT)
+    _t(d, f"{frame_idx} / {max_frames}", (W-M, y+3), 9, _TEXT_FAINT, anchor="rt")
 
     return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
 
 # ── Etichette giocatori — stile broadcast ────────────────────────────────────
 def draw_player(frame, x1, y1, x2, y2, tid, team_id, color_bgr):
-    cx  = (x1 + x2) // 2
-    w   = x2 - x1
-    h   = y2 - y1
+    """Stile broadcast professionale: solo angolini + dot sotto i piedi. Nessun ID."""
+    cx = (x1 + x2) // 2
+    w  = x2 - x1
 
-    # --- bounding box sottile colorata
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color_bgr, 1, cv2.LINE_AA)
-    # angolini più spessi (broadcast style)
-    seg = max(4, min(w//4, 10))
-    cv2.line(frame, (x1,      y1), (x1+seg,  y1), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x1,      y1), (x1,      y1+seg), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x2,      y1), (x2-seg,  y1), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x2,      y1), (x2,      y1+seg), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x1,      y2), (x1+seg,  y2), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x1,      y2), (x1,      y2-seg), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x2,      y2), (x2-seg,  y2), color_bgr, 2, cv2.LINE_AA)
-    cv2.line(frame, (x2,      y2), (x2,      y2-seg), color_bgr, 2, cv2.LINE_AA)
+    # Angolini broadcast (nessun rettangolo intero)
+    seg = max(5, min(w // 3, 14))
+    tk  = 2
+    for (px_, py_), (dx, dy) in [
+        ((x1, y1), ( seg, 0)), ((x1, y1), (0,  seg)),
+        ((x2, y1), (-seg, 0)), ((x2, y1), (0,  seg)),
+        ((x1, y2), ( seg, 0)), ((x1, y2), (0, -seg)),
+        ((x2, y2), (-seg, 0)), ((x2, y2), (0, -seg)),
+    ]:
+        cv2.line(frame, (px_, py_), (px_+dx, py_+dy), color_bgr, tk, cv2.LINE_AA)
 
-    # --- dot sul piedistallo (ellisse ombra)
-    bw = max(6, int(w * 0.38))
-    bh = max(2, int(w * 0.09))
-    ov = frame.copy()
-    cv2.ellipse(ov, (cx, y2), (bw, bh), 0, 0, 360, color_bgr, -1)
-    cv2.addWeighted(ov, 0.18, frame, 0.82, 0, frame)
+    # Dot colorato sotto i piedi (pallino pieno + alone scuro)
+    dot_r = max(4, w // 5)
+    shadow = frame.copy()
+    cv2.circle(shadow, (cx, y2 + dot_r // 2), dot_r + 2, (0, 0, 0), -1)
+    cv2.addWeighted(shadow, 0.35, frame, 0.65, 0, frame)
+    cv2.circle(frame, (cx, y2 + dot_r // 2), dot_r, color_bgr, -1, cv2.LINE_AA)
+    cv2.circle(frame, (cx, y2 + dot_r // 2), dot_r, (255,255,255), 1, cv2.LINE_AA)
 
-    # --- pill label compatta sopra la testa
+    # Solo per arbitri: label "REF" minima
     if team_id == 2:
-        label = "REF"
-    else:
-        label = f"#{tid}"
-    font       = cv2.FONT_HERSHEY_SIMPLEX
-    scale      = 0.28
-    thick      = 1
-    (lw, lh), _ = cv2.getTextSize(label, font, scale, thick)
-    pad = 3
-    lx  = cx - lw // 2
-    ly  = y1 - 5
-    # sfondo pill
-    cv2.rectangle(frame,
-                  (lx-pad,    ly-lh-pad),
-                  (lx+lw+pad, ly+pad),
-                  (5, 7, 12), -1)
-    # bordo colorato pill
-    cv2.rectangle(frame,
-                  (lx-pad,    ly-lh-pad),
-                  (lx+lw+pad, ly+pad),
-                  color_bgr, 1)
-    cv2.putText(frame, label, (lx, ly),
-                font, scale, (238, 242, 248), thick, cv2.LINE_AA)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        (lw, lh), _ = cv2.getTextSize("REF", font, 0.30, 1)
+        lx = cx - lw // 2
+        ly = y1 - 4
+        cv2.rectangle(frame, (lx-3, ly-lh-3), (lx+lw+3, ly+3), (20, 18, 30), -1)
+        cv2.putText(frame, "REF", (lx, ly), font, 0.30, color_bgr, 1, cv2.LINE_AA)
 
 
 def draw_ball(frame, x1, y1, x2, y2):
     cx, cy = (x1+x2)//2, (y1+y2)//2
-    r = max(5, (x2-x1)//2)
-    cv2.circle(frame, (cx, cy), r,    BALL_BGR,       -1)
-    cv2.circle(frame, (cx, cy), r,    (160, 130, 15),  1)
-    cv2.circle(frame, (cx, cy), r//3, (255, 248, 200), -1)
+    r = max(7, (x2-x1)//2 + 2)
+    # alone esterno semitrasparente
+    glow = frame.copy()
+    cv2.circle(glow, (cx, cy), r+4, BALL_BGR, -1)
+    cv2.addWeighted(glow, 0.25, frame, 0.75, 0, frame)
+    # corpo palla
+    cv2.circle(frame, (cx, cy), r, BALL_BGR, -1, cv2.LINE_AA)
+    # bordo scuro
+    cv2.circle(frame, (cx, cy), r, (120, 90, 0), 1, cv2.LINE_AA)
+    # riflesso
+    cv2.circle(frame, (cx - r//3, cy - r//3), max(2, r//3), (255, 252, 210), -1, cv2.LINE_AA)
 
 
 # ── Canvas compositing — minimap centrata verticalmente ───────────────────────
@@ -495,7 +485,7 @@ def main():
 
     team_classifier = TeamClassifier()
     team_classifier.load_samples(str(TEAM_JSON))
-    reid_weights = BASE_DIR / "models" / "osnet_ain_x1_0_msmt17.pt"
+    reid_weights = BASE_DIR / "models" / "osnet_x0_25_msmt17.pt"
 
     tracker = BoTSORT(
         reid_weights      = reid_weights,
