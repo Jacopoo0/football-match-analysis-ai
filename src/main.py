@@ -363,12 +363,12 @@ class InferenceWorker(threading.Thread):
                 frame_proc = preprocess_frame(frame)
                 self.homography.update_frame(frame_proc)
 
-                # ── Detection giocatori: doppio pass per catturare tutto
+                # ── Detection giocatori
                 results_p = self.model.predict(
                     frame_proc, imgsz=INFER_SIZE, conf=PLAYER_CONF,
                     iou=PLAYER_IOU, device="cuda", verbose=False,
                     classes=[CLS_PLAYER, CLS_REFEREE],
-                    augment=True          # TTA: flip orizzontale per recuperare detection
+                    augment=True
                 )[0]
                 results_b = self.model.predict(
                     frame_proc, imgsz=INFER_SIZE, conf=0.04,
@@ -379,10 +379,29 @@ class InferenceWorker(threading.Thread):
                 player_det = sv.Detections.from_ultralytics(results_p)
                 ball_det   = sv.Detections.from_ultralytics(results_b)
 
+                # ── Secondo pass sulla metà superiore (giocatori lontani/piccoli)
+                fh_half = frame_proc.shape[0] // 2
+                top_half = frame_proc[:fh_half, :]
+                results_far = self.model.predict(
+                    top_half, imgsz=INFER_SIZE, conf=0.10,
+                    iou=0.50, device="cuda", verbose=False,
+                    classes=[CLS_PLAYER]
+                )[0]
+                if len(results_far.boxes) > 0:
+                    det_far = sv.Detections.from_ultralytics(results_far)
+                    # Correggi coordinate Y: erano relative alla metà superiore
+                    det_far.xyxy[:, 1] += 0   # y1 già corretto (crop dal top)
+                    det_far.xyxy[:, 3] += 0   # y2 idem
+                    # merge NMS manuale: tieni solo box far non già coperti
+                    if len(player_det) > 0:
+                        player_det = sv.Detections.merge([player_det, det_far])
+                    else:
+                        player_det = det_far
+
                 if len(player_det) > 0:
                     areas = ((player_det.xyxy[:,2]-player_det.xyxy[:,0]) *
                              (player_det.xyxy[:,3]-player_det.xyxy[:,1]))
-                    player_det = player_det[areas > 350]
+                    player_det = player_det[areas > 300]
 
                 if len(player_det) > 0:
                     dets_np = np.column_stack([
@@ -438,8 +457,12 @@ class InferenceWorker(threading.Thread):
                 fp = self.homography.pixel_to_field((cx, cy))
                 if fp: field_positions[tid] = (team_id, fp)
 
+            self.stats._last_players = players_for_stats
             self.stats.update(ball_center, players_for_stats)
             self.homography.update_players(field_positions)
+            # Passa scala pixel/metro allo StatsTracker se calibrato
+            if self.homography.px_per_m is not None:
+                self.stats.set_scale(self.homography.px_per_m)
             minimap = self.homography.render_minimap()
 
             frame_small = cv2.resize(frame, (FRAME_W, FRAME_H))
@@ -472,7 +495,7 @@ def main():
 
     team_classifier = TeamClassifier()
     team_classifier.load_samples(str(TEAM_JSON))
-    reid_weights = BASE_DIR / "models" / "osnet_x0_25_msmt17.pt"
+    reid_weights = BASE_DIR / "models" / "osnet_ain_x1_0_msmt17.pt"
 
     tracker = BoTSORT(
         reid_weights      = reid_weights,

@@ -3,6 +3,7 @@ import numpy as np
 
 
 METERS_PER_PIXEL = 0.058
+MAX_SPEED_KMH    = 36.0   # cap fisiologico: nessun calciatore supera i 36 km/h
 
 
 class StatsTracker:
@@ -21,11 +22,25 @@ class StatsTracker:
         self._pass_cooldown   = 0
         self._prev_free_frames = 0
         self._debug_counter   = 0
+        # Scala pixel/metro: aggiornata da HomographyMapper se calibrato
+        self._px_per_m        = None
 
         self.POSSESS_DIST    = 90
-        self.PASS_MIN_STREAK = 6   # frame minimi di possesso prima che conti come passaggio
-        self.PASS_COOLDOWN   = 15  # aumentato per evitare passaggi duplicati
+        self.PASS_MIN_STREAK = 8    # alzato da 6: riduce falsi positivi
+        self.PASS_COOLDOWN   = 20   # alzato da 15: evita duplicati su tackle
 
+    # ── Calibrazione scala dal campo reale ────────────────────────────────────
+    def set_scale(self, px_per_m: float):
+        """Riceve pixel/metro da HomographyMapper quando disponibile."""
+        self._px_per_m = px_per_m
+
+    def _px_to_m(self, px: float) -> float:
+        """Converte pixel in metri usando scala reale o costante fallback."""
+        if self._px_per_m and self._px_per_m > 0:
+            return px / self._px_per_m
+        return px * METERS_PER_PIXEL
+
+    # ── Update per-frame ──────────────────────────────────────────────────────
     def update(self, ball_center, players):
         self._debug_counter += 1
 
@@ -50,41 +65,32 @@ class StatsTracker:
 
         in_possession = (closest_dist < self.POSSESS_DIST and closest_team in (0, 1))
 
-        # ── Possesso ─────────────────────────────────────────────────────────
+        # ── Possesso ──────────────────────────────────────────────────────────
         if in_possession:
             self.possession[closest_team] += 1
             self.poss_history.append(closest_team)
         else:
             self.poss_history.append(-1)
 
-        # ── Passaggi ─────────────────────────────────────────────────────────
-        # Un passaggio viene registrato quando:
-        # 1. C'era un possessore precedente (team diverso da -1)
-        # 2. Il possesso cambia a una squadra diversa
-        # 3. Il possessore precedente aveva la palla per almeno PASS_MIN_STREAK frame
-        # 4. Cooldown scaduto (evita conteggi doppi)
+        # ── Passaggi ──────────────────────────────────────────────────────────
         if in_possession:
             if closest_team == self._ball_owner_team:
-                # Stessa squadra: incrementa streak
                 self._owner_streak += 1
             else:
-                # Cambio squadra: valuta se e' un passaggio
                 if (self._ball_owner_team in (0, 1)
                         and self._owner_streak >= self.PASS_MIN_STREAK
                         and self._pass_cooldown == 0):
                     self.passes[self._ball_owner_team] += 1
                     self._pass_cooldown = self.PASS_COOLDOWN
-                # Aggiorna proprietario indipendentemente
                 self._ball_owner_team = closest_team
                 self._owner_streak    = 1
             self._prev_free_frames = 0
         else:
             self._prev_free_frames += 1
-            # Se la palla e' libera da troppo tempo, resetta streak ma mantieni owner
             if self._prev_free_frames > 20:
                 self._owner_streak = 0
 
-        # ── Distanza + velocita' ─────────────────────────────────────────────
+        # ── Distanza + velocità ───────────────────────────────────────────────
         for cx, cy, team_id, tid in players:
             if tid == -1:
                 continue
@@ -95,12 +101,13 @@ class StatsTracker:
                 d = ((cx - lx) ** 2 + (cy - ly) ** 2) ** 0.5
                 if 0.5 < d < 60:
                     self.dist_px[tid] += d
-                    kmh = d * METERS_PER_PIXEL * self.fps * 3.6
-                    # Rimosso il cap a 40 km/h: valori reali possono superarlo
-                    if kmh < 60:
+                    kmh = self._px_to_m(d) * self.fps * 3.6
+                    # Cap fisiologico: elimina spike da ID instabili
+                    if kmh <= MAX_SPEED_KMH:
                         self.speed_hist[tid].append(kmh)
             self.last_pos[tid] = (cx, cy)
 
+    # ── Getters ───────────────────────────────────────────────────────────────
     def possession_pct(self):
         base = self.possession[0] + self.possession[1]
         if base == 0:
@@ -123,7 +130,7 @@ class StatsTracker:
         for tid, px in self.dist_px.items():
             t = self.team_of.get(tid, -1)
             if t in d:
-                d[t] += px * METERS_PER_PIXEL
+                d[t] += self._px_to_m(px)
         return d[0], d[1]
 
     def avg_speed_kmh(self):
