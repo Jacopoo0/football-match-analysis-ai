@@ -369,7 +369,7 @@ def _hough_homography(frame):
     ], dtype=np.float32) + MAP_MARGIN
 
     H, mask_h = cv2.findHomography(src, dst, cv2.RANSAC, 5.0)
-    if H is None or mask_h.sum() < 4:
+    if H is None or int(mask_h.sum()) < 4:
         return None, "GreenBBox"
     return H, "Hough"
 
@@ -497,7 +497,7 @@ class HomographyMapper:
             ], dtype=np.float32)
 
             H, mask = cv2.findHomography(corners_2d, dst, cv2.RANSAC, 5.0)
-            if H is not None and mask is not None and mask.sum() >= 3:
+            if H is not None and (mask is not None) and int(mask.sum()) >= 3:
                 self._H_buf.append(H)
                 self.H   = np.mean(self._H_buf, axis=0)
                 self.H_inv = np.linalg.inv(self.H)
@@ -531,7 +531,11 @@ class HomographyMapper:
     # ── Pixel immagine → coordinate campo (metri) ─────────────────────────────
 
     def pixel_to_field(self, pixel_pt):
-        """Converte pixel → (x_m, z_m) nel sistema campo."""
+        """
+        Converte pixel-video → (x_m, z_m) nel sistema campo (metri).
+        Usato SOLO per StatsTracker (velocità, distanza).
+        NON usato per la minimappa — quella usa pixel_to_map() direttamente.
+        """
         px, py = float(pixel_pt[0]), float(pixel_pt[1])
 
         # Metodo PnP: ray casting sul piano y=0
@@ -540,29 +544,32 @@ class HomographyMapper:
                 K_inv = np.linalg.inv(self.K)
                 R, _  = cv2.Rodrigues(self._rvec)
                 t     = self._tvec.reshape(3)
+                # Ray in coordinate camera
                 ray_cam = K_inv @ np.array([px, py, 1.0])
-                # Intersezione con piano y=0: R*X + t = lambda*ray_cam
-                # y=0 → (R[1,:]*X) + t[1] = 0
-                denom = R[1] @ ray_cam
+                # Intersezione ray con piano mondiale y=0
+                # X_world = R^T (lambda * ray_cam - t)
+                # y_world = 0  →  R[1,:] · X_world = 0
+                # R[1,:] · (R^T (lambda*ray_cam - t)) = 0
+                # lambda * (R[1,:] · R^T · ray_cam) = R[1,:] · R^T · t
+                Rt = R.T
+                num   = float((R[1,:] @ Rt) @ t)
+                denom = float((R[1,:] @ Rt) @ ray_cam)
                 if abs(denom) < 1e-6:
-                    raise ValueError("ray parallelo al piano")
-                lam = -( R[1] @ (-R.T @ t) + 0 ) / denom  # semplificato
-                # Risolvo con formula completa
-                # (R^T)(lambda*ray_cam - t) = X_world
-                X_cam = lam * ray_cam
-                X_world = R.T @ (X_cam - t)
+                    return None
+                lam     = num / denom
+                X_world = Rt @ (lam * ray_cam - t)
                 x_m, z_m = float(X_world[0]), float(X_world[2])
                 if -60 < x_m < 60 and -40 < z_m < 40:
                     return (x_m, z_m)
             except Exception:
                 pass
 
-        # Metodo omografia 2D
+        # Metodo omografia 2D: H mappa pixel-video → pixel-mappa
+        # Convertiamo pixel-mappa → metri
         if self.H is not None:
             try:
                 pt = cv2.perspectiveTransform(
                     np.array([[[px, py]]], dtype=np.float32), self.H)[0][0]
-                # Converti coord mappa → metri
                 u, v = float(pt[0]), float(pt[1])
                 fw = MAP_W - 2*MAP_MARGIN
                 fh = MAP_H - 2*MAP_MARGIN
@@ -570,6 +577,32 @@ class HomographyMapper:
                 z_m = (v - MAP_MARGIN) / fh * FIELD_H - FIELD_H/2
                 if -60 < x_m < 60 and -40 < z_m < 40:
                     return (x_m, z_m)
+            except Exception:
+                pass
+
+        return None
+
+    def pixel_to_map(self, pixel_pt):
+        """
+        Converte pixel-video → (u, v) pixel della minimappa (MAP_W x MAP_H).
+        Percorso diretto senza passare per i metri — usato dal renderer.
+        """
+        px, py = float(pixel_pt[0]), float(pixel_pt[1])
+
+        # PnP: proietta sul piano campo poi scala in pixel-mappa
+        if self._pnp_ok and self.K is not None and self._rvec is not None:
+            fm = self.pixel_to_field((px, py))
+            if fm is not None:
+                return _field_to_map(fm[0], fm[1])
+
+        # Omografia diretta pixel-video → pixel-mappa
+        if self.H is not None:
+            try:
+                pt = cv2.perspectiveTransform(
+                    np.array([[[px, py]]], dtype=np.float32), self.H)[0][0]
+                u, v = int(round(float(pt[0]))), int(round(float(pt[1])))
+                if 0 <= u < MAP_W and 0 <= v < MAP_H:
+                    return (u, v)
             except Exception:
                 pass
 
@@ -589,30 +622,65 @@ class HomographyMapper:
         img = _BASE_MINIMAP.copy()
 
         # Label metodo calibrazione
-        cv2.putText(img, f"MINIMAP [{self._cal_method}]",
-                    (4, 10), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.28, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(img, f"[{self._cal_method}]",
+                    (4, MAP_H - 4), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.26, (140, 140, 140), 1, cv2.LINE_AA)
 
-        # Giocatori
-        T0_BGR = ( 55, 135, 255)
-        T1_BGR = (255,  65,  65)
-        REF_BGR= (185, 145, 255)
-        for tid, (team_id, fp) in self._players.items():
-            if fp is None:
+        T0_BGR  = ( 55, 135, 255)
+        T1_BGR  = (255,  65,  65)
+        REF_BGR = (185, 145, 255)
+        UNK_BGR = (115, 128, 152)
+
+        # ── Giocatori
+        # _players ha due possibili strutture a seconda di come viene popolato:
+        #   A) tid → (team_id, field_pos_metres)   ← da pixel_to_field in main.py
+        #   B) tid → (team_id, pixel_center)        ← se main.py passa i pixel raw
+        # Gestiamo entrambi i casi
+        for tid, val in self._players.items():
+            if val is None:
                 continue
-            x_m, z_m = fp
-            u, v = _field_to_map(x_m, z_m)
-            if 0 <= u < MAP_W and 0 <= v < MAP_H:
-                col = T0_BGR if team_id == 0 else (T1_BGR if team_id == 1 else REF_BGR)
-                cv2.circle(img, (u, v), 5, col, -1)
-                cv2.circle(img, (u, v), 5, (255,255,255), 1)
+            try:
+                team_id, pos = val
+            except (TypeError, ValueError):
+                continue
 
-        # Palla
+            map_pt = None
+
+            # Caso A: pos è già in metri (tuple di 2 float in range campo)
+            if pos is not None:
+                try:
+                    xv, zv = float(pos[0]), float(pos[1])
+                    if -60 < xv < 60 and -40 < zv < 40:
+                        # È in metri → converti in pixel mappa
+                        map_pt = _field_to_map(xv, zv)
+                    else:
+                        # Fuori range metri → potrebbe essere pixel-video
+                        map_pt = self.pixel_to_map((xv, zv))
+                except Exception:
+                    pass
+
+            if map_pt is None:
+                continue
+
+            u, v = int(map_pt[0]), int(map_pt[1])
+            if not (0 <= u < MAP_W and 0 <= v < MAP_H):
+                continue
+
+            if   team_id == 0: col = T0_BGR
+            elif team_id == 1: col = T1_BGR
+            elif team_id == 2: col = REF_BGR
+            else:              col = UNK_BGR
+
+            cv2.circle(img, (u, v), 4, col,           -1, cv2.LINE_AA)
+            cv2.circle(img, (u, v), 4, (255,255,255),  1, cv2.LINE_AA)
+
+        # ── Palla
         if self._ball_map is not None:
-            fp = self.pixel_to_field(self._ball_map)
-            if fp:
-                u, v = _field_to_map(*fp)
+            map_pt = self.pixel_to_map(self._ball_map)
+            if map_pt is not None:
+                u, v = int(map_pt[0]), int(map_pt[1])
                 if 0 <= u < MAP_W and 0 <= v < MAP_H:
-                    cv2.circle(img, (u, v), 4, _DOT_BALL, -1)
+                    cv2.circle(img, (u, v), 5, _DOT_BALL,       -1, cv2.LINE_AA)
+                    cv2.circle(img, (u, v), 5, (120, 90, 0),     1, cv2.LINE_AA)
 
         return img
