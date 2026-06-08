@@ -15,6 +15,7 @@ MiniMappaFootBall is a computer vision pipeline that processes football match fo
 📸 **Output Preview**
 
 ![output preview](https://github.com/user-attachments/assets/5441e3b9-ddff-4a95-ab93-431987e5c236)
+<img width="1918" height="781" alt="Screenshot 2026-05-06 195221" src="https://github.com/user-attachments/assets/ad7a344f-4531-42ae-a3e2-e6743d09b84c" />
 
 ---
 
